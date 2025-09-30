@@ -1,4 +1,6 @@
-# packages
+########################################
+############### PACKAGES ###############
+########################################
 library(Seurat)
 library(ggplot2)
 library(SingleR)
@@ -9,79 +11,6 @@ library(SingleCellExperiment)
 library(patchwork)
 library(reshape2)
 library(hdf5r)
-
-# function plot_integrated_clusters:
-plot_integrated_clusters = function (srat) { 
-  ## take an integrated Seurat object, plot distributions over orig.ident
-  count_table <- table(srat@meta.data$seurat_clusters, srat@meta.data$orig.ident)
-  count_mtx   <- as.data.frame.matrix(count_table)
-  count_mtx$cluster <- rownames(count_mtx)
-  melt_mtx    <- melt(count_mtx)
-  melt_mtx$cluster <- as.factor(melt_mtx$cluster)
-  
-  cluster_size   <- aggregate(value ~ cluster, data = melt_mtx, FUN = sum)
-  
-  sorted_labels <- paste(sort(as.integer(levels(cluster_size$cluster)),decreasing = T))
-  cluster_size$cluster <- factor(cluster_size$cluster,levels = sorted_labels)
-  melt_mtx$cluster <- factor(melt_mtx$cluster,levels = sorted_labels)
-  
-  colnames(melt_mtx)[2] <- "dataset"
-  
-  
-  p1 <- ggplot(cluster_size, aes(y= cluster,x = value)) + geom_bar(position="dodge", stat="identity",fill = "grey60") + 
-    theme_bw() + scale_x_log10() + xlab("Cells per cluster, log10 scale") + ylab("")
-  p2 <- ggplot(melt_mtx,aes(x=cluster,y=value,fill=dataset)) + 
-    geom_bar(position="fill", stat="identity") + theme_bw() + coord_flip() + 
-    scale_fill_brewer(palette = "Set2") +
-    ylab("Fraction of cells in each dataset") + xlab("Cluster number") + theme(legend.position="top")
-  
-  p2 + p1 + plot_layout(widths = c(3,1))
-  
-  
-}
-
-plot_integrated_clusters_annotated <- function(srat) { 
-  # Tabla: cluster_annotation x orig.ident
-  count_table <- table(srat@meta.data$cluster_annotation, srat@meta.data$orig.ident)
-  count_mtx   <- as.data.frame.matrix(count_table)
-  count_mtx$cluster <- rownames(count_mtx)
-  melt_mtx    <- melt(count_mtx)
-  melt_mtx$cluster <- as.factor(melt_mtx$cluster)
-  
-  # Total por anotación
-  cluster_size <- aggregate(value ~ cluster, data = melt_mtx, FUN = sum)
-  
-  # Ordenar por tamaño de clúster
-  sorted_labels <- cluster_size$cluster[order(cluster_size$value, decreasing = TRUE)]
-  cluster_size$cluster <- factor(cluster_size$cluster, levels = sorted_labels)
-  melt_mtx$cluster     <- factor(melt_mtx$cluster, levels = sorted_labels)
-  
-  colnames(melt_mtx)[2] <- "dataset"
-  
-  # Gráfico 1: tamaño absoluto
-  p1 <- ggplot(cluster_size, aes(y = cluster, x = value)) + 
-    geom_bar(position = "dodge", stat = "identity", fill = "grey60") + 
-    theme_bw() + 
-    scale_x_log10() + 
-    xlab("Cells per cluster (log10)") + 
-    ylab("")
-  
-  # Gráfico 2: proporciones por `orig.ident`
-  p2 <- ggplot(melt_mtx, aes(x = cluster, y = value, fill = dataset)) + 
-    geom_bar(position = "fill", stat = "identity") + 
-    theme_bw() + 
-    coord_flip() + 
-    scale_fill_brewer(palette = "Set2") +
-    ylab("Fraction of cells per dataset") + 
-    xlab("Annotated cluster") + 
-    theme(legend.position = "top")
-  
-  # Combina ambos plots
-  p2 + p1 + plot_layout(widths = c(3, 1))
-}
-
-
-
 
 ########################################
 ############### DATA IMPORT ############
@@ -110,9 +39,10 @@ rm(bm_KO)
 ############### QUALITY ################
 ########################################
 
+# note:
+# this part is extended in QC_SR.R
 
-
-
+#### SPLEEN WT
 
 # mitochondrial genes and ribosomal proteins
 spl_WT_obj[["percent.mt"]]  <- PercentageFeatureSet(spl_WT_obj, pattern = "^mt-")
@@ -121,15 +51,6 @@ spl_WT_obj[["percent.rb"]] <- PercentageFeatureSet(spl_WT_obj, pattern = "^Rps|^
 doub_spl_WT <- read.csv("data/SCRUBLET/scrublet_WT_spl.csv",header = T,row.names = 1)
 colnames(doub_spl_WT) <- c("Doublet_score","Is_doublet")
 spl_WT_obj <- AddMetaData(spl_WT_obj,doub_spl_WT)
-
-# graphs
-VlnPlot(spl_WT_obj, features = c("nFeature_RNA","nCount_RNA","percent.mt","percent.rb"),ncol = 4,pt.size = 0.1) &
-  theme(plot.title = element_text(size=10))
-FeatureScatter(spl_WT_obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
-FeatureScatter(spl_WT_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
-FeatureScatter(spl_WT_obj, feature1 = "nCount_RNA", feature2 = "percent.rb")
-FeatureScatter(spl_WT_obj, feature1 = "percent.rb", feature2 = "percent.mt")
-FeatureScatter(spl_WT_obj, feature1 = "nFeature_RNA", feature2 = "Doublet_score")
 
 # filtering
 spl_WT_obj[['QC']] <- ifelse(spl_WT_obj@meta.data$Is_doublet == 'True','Doublet','Pass')
@@ -140,6 +61,10 @@ spl_WT_obj[['QC']] <- ifelse(spl_WT_obj@meta.data$nFeature_RNA < 500 & spl_WT_ob
 table(spl_WT_obj[['QC']])
 
 
+
+
+#### SPLEEN KO
+
 ## PrimPol KO spleen
 spl_KO_obj[["percent.mt"]]  <- PercentageFeatureSet(spl_KO_obj, pattern = "^mt-")
 spl_KO_obj[["percent.rb"]] <- PercentageFeatureSet(spl_KO_obj, pattern = "^Rps|^Rpl")
@@ -148,14 +73,6 @@ doub_spl_KO <- read.csv("data/SCRUBLET/scrublet_KO_spl.csv",header = T,row.names
 colnames(doub_spl_KO) <- c("Doublet_score","Is_doublet")
 spl_KO_obj <- AddMetaData(spl_KO_obj,doub_spl_KO)
 
-# graphs
-VlnPlot(spl_KO_obj, features = c("nFeature_RNA","nCount_RNA","percent.mt","percent.rb"),ncol = 4,pt.size = 0.1) &
-  theme(plot.title = element_text(size=10))
-FeatureScatter(spl_KO_obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
-FeatureScatter(spl_KO_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
-FeatureScatter(spl_KO_obj, feature1 = "nCount_RNA", feature2 = "percent.rb")
-FeatureScatter(spl_KO_obj, feature1 = "percent.rb", feature2 = "percent.mt")
-FeatureScatter(spl_KO_obj, feature1 = "nFeature_RNA", feature2 = "Doublet_score")
 
 # filtering
 spl_KO_obj[['QC']] <- ifelse(spl_KO_obj@meta.data$Is_doublet == 'True','Doublet','Pass')
@@ -165,22 +82,15 @@ spl_KO_obj[['QC']] <- ifelse(spl_KO_obj@meta.data$percent.mt > 15 & spl_KO_obj@m
 spl_KO_obj[['QC']] <- ifelse(spl_KO_obj@meta.data$nFeature_RNA < 500 & spl_KO_obj@meta.data$QC != 'Pass' & spl_KO_obj@meta.data$QC != 'High_MT',paste('High_MT',spl_KO_obj@meta.data$QC,sep = ','),spl_KO_obj@meta.data$QC)
 table(spl_KO_obj[['QC']])
 
-# WT bone marrow
+
+#### BONE MARROW WT
+
 bm_WT_obj[["percent.mt"]]  <- PercentageFeatureSet(bm_WT_obj, pattern = "^mt-")
 bm_WT_obj[["percent.rb"]] <- PercentageFeatureSet(bm_WT_obj, pattern = "^Rps|^Rpl")
 # doublets
 doub_bm_WT <- read.csv("data/SCRUBLET/scrublet_WT_BM.csv",header = T,row.names = 1)
 colnames(doub_bm_WT) <- c("Doublet_score","Is_doublet")
 bm_WT_obj <- AddMetaData(bm_WT_obj,doub_bm_WT)
-
-# graphs
-VlnPlot(bm_WT_obj, features = c("nFeature_RNA","nCount_RNA","percent.mt","percent.rb"),ncol = 4,pt.size = 0.1) &
-  theme(plot.title = element_text(size=10))
-FeatureScatter(bm_WT_obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
-FeatureScatter(bm_WT_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
-FeatureScatter(bm_WT_obj, feature1 = "nCount_RNA", feature2 = "percent.rb")
-FeatureScatter(bm_WT_obj, feature1 = "percent.rb", feature2 = "percent.mt")
-FeatureScatter(bm_WT_obj, feature1 = "nFeature_RNA", feature2 = "Doublet_score")
 
 # filtering
 bm_WT_obj[['QC']] <- ifelse(bm_WT_obj@meta.data$Is_doublet == 'True','Doublet','Pass')
@@ -190,22 +100,14 @@ bm_WT_obj[['QC']] <- ifelse(bm_WT_obj@meta.data$percent.mt > 15 & bm_WT_obj@meta
 bm_WT_obj[['QC']] <- ifelse(bm_WT_obj@meta.data$nFeature_RNA < 500 & bm_WT_obj@meta.data$QC != 'Pass' & bm_WT_obj@meta.data$QC != 'High_MT',paste('High_MT',bm_WT_obj@meta.data$QC,sep = ','),bm_WT_obj@meta.data$QC)
 table(bm_WT_obj[['QC']])
 
-# PrimPol KO bone marrow
+#### BONE MARROW PRIMPOL KO
+
 bm_KO_obj[["percent.mt"]]  <- PercentageFeatureSet(bm_KO_obj, pattern = "^mt-")
 bm_KO_obj[["percent.rb"]] <- PercentageFeatureSet(bm_KO_obj, pattern = "^Rps|^Rpl")
 # doublets
 doub_bm_KO <- read.csv("data/SCRUBLET/scrublet_KO_BM.csv",header = T,row.names = 1)
 colnames(doub_bm_KO) <- c("Doublet_score","Is_doublet")
 bm_KO_obj <- AddMetaData(bm_KO_obj,doub_bm_KO)
-
-# graphs
-VlnPlot(bm_KO_obj, features = c("nFeature_RNA","nCount_RNA","percent.mt","percent.rb"),ncol = 4,pt.size = 0.1) &
-  theme(plot.title = element_text(size=10))
-FeatureScatter(bm_KO_obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
-FeatureScatter(bm_KO_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
-FeatureScatter(bm_KO_obj, feature1 = "nCount_RNA", feature2 = "percent.rb")
-FeatureScatter(bm_KO_obj, feature1 = "percent.rb", feature2 = "percent.mt")
-FeatureScatter(bm_KO_obj, feature1 = "nFeature_RNA", feature2 = "Doublet_score")
 
 # filtering
 bm_KO_obj[['QC']] <- ifelse(bm_KO_obj@meta.data$Is_doublet == 'True','Doublet','Pass')
@@ -220,11 +122,15 @@ table(bm_KO_obj[['QC']])
 ############### SPLEEN #################
 ########################################
 
+# filter
+spl_WT_obj_pass <- subset(spl_WT_obj, subset = QC == "Pass")
+spl_KO_obj_pass <- subset(spl_KO_obj, subset = QC == "Pass")
+
 # integration
 # creat a list
 spl_list <- list()
-spl_list[["spl_WT"]] <- spl_WT_obj
-spl_list[["spl_KO"]] <- spl_KO_obj
+spl_list[["spl_WT"]] <- spl_WT_obj_pass
+spl_list[["spl_KO"]] <- spl_KO_obj_pass
 
 # normalize/find HVG
 for (i in 1:length(spl_list)) {
@@ -264,8 +170,11 @@ DimPlot(spl_seurat, reduction = "umap", split.by = "orig.ident") + NoLegend()
 
 # let's cluster
 spl_seurat <- FindNeighbors(spl_seurat, dims = 1:30, k.param = 10, verbose = F)
-spl_seurat <- FindClusters(spl_seurat, verbose = F, resolution = 0.1)
+spl_seurat <- FindClusters(spl_seurat, verbose = F)
+# spl_seurat <- FindClusters(spl_seurat, verbose = F, resolution = 0.1)
 DimPlot(spl_seurat,label = T) + NoLegend()
+
+
 
 # to test several clusters
 for (res in c(0.05, 0.1, 0.2, 0.3, 0.5, 0.8)) {
@@ -273,9 +182,9 @@ for (res in c(0.05, 0.1, 0.2, 0.3, 0.5, 0.8)) {
   print(DimPlot(spl_seurat, label = TRUE) + ggtitle(paste("Resolution", res)))
 }
 
-
-plot_integrated_clusters(spl_seurat)
-
+# table with the cluster
+count_table <- table(spl_seurat@meta.data$seurat_clusters, spl_seurat@meta.data$orig.ident)
+count_table
 
 ### annotation
 
@@ -336,8 +245,7 @@ spl_seurat@meta.data <- meta
 
 DimPlot(spl_seurat, group.by = "cluster_annotation", label = TRUE, repel = TRUE) + NoLegend()
 
-# ploteamos los porcentajes
-plot_integrated_clusters_annotated(spl_seurat)
+
 
 
 # if i want to check specific genes in cluster

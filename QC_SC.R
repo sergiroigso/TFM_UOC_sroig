@@ -46,16 +46,27 @@ FeatureScatter(spl_WT_obj, feature1 = "nCount_RNA", feature2 = "percent.rb")
 FeatureScatter(spl_WT_obj, feature1 = "percent.rb", feature2 = "percent.mt")
 FeatureScatter(spl_WT_obj, feature1 = "nFeature_RNA", feature2 = "Doublet_score")
 
+
+
 # filtering
 spl_WT_obj[['QC']] <- ifelse(spl_WT_obj@meta.data$Is_doublet == 'True','Doublet','Pass')
+FeatureScatter(spl_WT_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", group.by = "percent.mt")
+FeatureScatter(spl_WT_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", group.by = "percent.rb")
+FeatureScatter(spl_WT_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", group.by = "Is_doublet")
 spl_WT_obj[['QC']] <- ifelse(spl_WT_obj@meta.data$nFeature_RNA < 500 & spl_WT_obj@meta.data$QC == 'Pass','Low_nFeature',spl_WT_obj@meta.data$QC)
 spl_WT_obj[['QC']] <- ifelse(spl_WT_obj@meta.data$nFeature_RNA < 500 & spl_WT_obj@meta.data$QC != 'Pass' & spl_WT_obj@meta.data$QC != 'Low_nFeature',paste('Low_nFeature',spl_WT_obj@meta.data$QC,sep = ','),spl_WT_obj@meta.data$QC)
 spl_WT_obj[['QC']] <- ifelse(spl_WT_obj@meta.data$percent.mt > 15 & spl_WT_obj@meta.data$QC == 'Pass','High_MT',spl_WT_obj@meta.data$QC)
 spl_WT_obj[['QC']] <- ifelse(spl_WT_obj@meta.data$nFeature_RNA < 500 & spl_WT_obj@meta.data$QC != 'Pass' & spl_WT_obj@meta.data$QC != 'High_MT',paste('High_MT',spl_WT_obj@meta.data$QC,sep = ','),spl_WT_obj@meta.data$QC)
 table(spl_WT_obj[['QC']])
 
+# to plot after filtering:
+# Por QC
+FeatureScatter(spl_WT_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", group.by = "QC")
+
+
 
 ## PrimPol KO spleen
+
 spl_KO_obj[["percent.mt"]]  <- PercentageFeatureSet(spl_KO_obj, pattern = "^mt-")
 spl_KO_obj[["percent.rb"]] <- PercentageFeatureSet(spl_KO_obj, pattern = "^Rps|^Rpl")
 # doublets
@@ -79,6 +90,11 @@ spl_KO_obj[['QC']] <- ifelse(spl_KO_obj@meta.data$nFeature_RNA < 500 & spl_KO_ob
 spl_KO_obj[['QC']] <- ifelse(spl_KO_obj@meta.data$percent.mt > 15 & spl_KO_obj@meta.data$QC == 'Pass','High_MT',spl_KO_obj@meta.data$QC)
 spl_KO_obj[['QC']] <- ifelse(spl_KO_obj@meta.data$nFeature_RNA < 500 & spl_KO_obj@meta.data$QC != 'Pass' & spl_KO_obj@meta.data$QC != 'High_MT',paste('High_MT',spl_KO_obj@meta.data$QC,sep = ','),spl_KO_obj@meta.data$QC)
 table(spl_KO_obj[['QC']])
+
+# to plot after filtering:
+# Por QC
+FeatureScatter(spl_KO_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", group.by = "QC")
+
 
 # WT bone marrow
 bm_WT_obj[["percent.mt"]]  <- PercentageFeatureSet(bm_WT_obj, pattern = "^mt-")
@@ -105,7 +121,12 @@ bm_WT_obj[['QC']] <- ifelse(bm_WT_obj@meta.data$percent.mt > 15 & bm_WT_obj@meta
 bm_WT_obj[['QC']] <- ifelse(bm_WT_obj@meta.data$nFeature_RNA < 500 & bm_WT_obj@meta.data$QC != 'Pass' & bm_WT_obj@meta.data$QC != 'High_MT',paste('High_MT',bm_WT_obj@meta.data$QC,sep = ','),bm_WT_obj@meta.data$QC)
 table(bm_WT_obj[['QC']])
 
+# to plot after filtering:
+# Por QC
+FeatureScatter(bm_WT_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", group.by = "QC")
+
 # PrimPol KO bone marrow
+
 bm_KO_obj[["percent.mt"]]  <- PercentageFeatureSet(bm_KO_obj, pattern = "^mt-")
 bm_KO_obj[["percent.rb"]] <- PercentageFeatureSet(bm_KO_obj, pattern = "^Rps|^Rpl")
 # doublets
@@ -129,3 +150,7 @@ bm_KO_obj[['QC']] <- ifelse(bm_KO_obj@meta.data$nFeature_RNA < 500 & bm_KO_obj@m
 bm_KO_obj[['QC']] <- ifelse(bm_KO_obj@meta.data$percent.mt > 15 & bm_KO_obj@meta.data$QC == 'Pass','High_MT',bm_KO_obj@meta.data$QC)
 bm_KO_obj[['QC']] <- ifelse(bm_KO_obj@meta.data$nFeature_RNA < 500 & bm_KO_obj@meta.data$QC != 'Pass' & bm_KO_obj@meta.data$QC != 'High_MT',paste('High_MT',bm_KO_obj@meta.data$QC,sep = ','),bm_KO_obj@meta.data$QC)
 table(bm_KO_obj[['QC']])
+
+# to plot after filtering:
+# Por QC
+FeatureScatter(bm_KO_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", group.by = "QC")

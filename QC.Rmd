@@ -121,6 +121,8 @@ We can see that doublets don’t often overlap with cell with low number of dete
 VlnPlot(subset(spl_WT_obj, subset = QC == 'Pass'),
         features = c("nFeature_RNA", "nCount_RNA", "percent.mt","percent.rb"), ncol = 4, pt.size = 0.1) & 
   theme(plot.title = element_text(size=10))
+# Por QC
+FeatureScatter(spl_WT_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", group.by = "QC")
 ```
 
 # Spleen PrimPol KO
@@ -152,6 +154,8 @@ table(spl_KO_obj[['QC']])
 VlnPlot(subset(spl_KO_obj, subset = QC == 'Pass'),
         features = c("nFeature_RNA", "nCount_RNA", "percent.mt","percent.rb"), ncol = 4, pt.size = 0.1) & 
   theme(plot.title = element_text(size=10))
+# Por QC
+FeatureScatter(spl_KO_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", group.by = "QC")
 ```
 
 # Bone Marrow WT
@@ -183,6 +187,8 @@ table(bm_WT_obj[['QC']])
 VlnPlot(subset(bm_WT_obj, subset = QC == 'Pass'),
         features = c("nFeature_RNA", "nCount_RNA", "percent.mt","percent.rb"), ncol = 4, pt.size = 0.1) & 
   theme(plot.title = element_text(size=10))
+# Por QC
+FeatureScatter(bm_WT_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", group.by = "QC")
 ```
 
 # Bone Marrow PrimPol KO
@@ -215,5 +221,7 @@ table(bm_KO_obj[['QC']])
 VlnPlot(subset(bm_KO_obj, subset = QC == 'Pass'),
         features = c("nFeature_RNA", "nCount_RNA", "percent.mt","percent.rb"), ncol = 4, pt.size = 0.1) & 
   theme(plot.title = element_text(size=10))
+# Por QC
+FeatureScatter(bm_KO_obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", group.by = "QC")
 ```
 
