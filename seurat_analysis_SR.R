@@ -11,6 +11,9 @@ library(SingleCellExperiment)
 library(patchwork)
 library(reshape2)
 library(hdf5r)
+library(speckle)
+library(tidyverse)
+library(compositions)
 
 ########################################
 ############### DATA IMPORT ############
@@ -126,37 +129,27 @@ table(bm_KO_obj[['QC']])
 spl_WT_obj_pass <- subset(spl_WT_obj, subset = QC == "Pass")
 spl_KO_obj_pass <- subset(spl_KO_obj, subset = QC == "Pass")
 
-# integration
-# creat a list
-spl_list <- list()
-spl_list[["spl_WT"]] <- spl_WT_obj_pass
-spl_list[["spl_KO"]] <- spl_KO_obj_pass
+spl_WT_obj_pass$condition <- "WT"
+spl_KO_obj_pass$condition <- "KO"
 
-# normalize/find HVG
+
+# list creation
+spl_list <- list(spl_WT = spl_WT_obj_pass, spl_KO = spl_KO_obj_pass)
+# normalization
 for (i in 1:length(spl_list)) {
   spl_list[[i]] <- NormalizeData(spl_list[[i]], verbose = F)
   spl_list[[i]] <- FindVariableFeatures(spl_list[[i]], selection.method = "vst", nfeatures = 2000, verbose = F)
 }
+
 # to find integration anchors and actually perform integration
-# it takes time...
 spl_anchors <- FindIntegrationAnchors(object.list = spl_list, dims = 1:30)
 spl_seurat <- IntegrateData(anchorset = spl_anchors, dims = 1:30)
+
 # to save ram
-rm(spl_list)
-rm(spl_anchors)
+rm(spl_list, spl_anchors)
 
-# before integration
-DefaultAssay(spl_seurat) <- "RNA"
-spl_seurat <- NormalizeData(spl_seurat, verbose = F)
-spl_seurat <- FindVariableFeatures(spl_seurat, selection.method = "vst", nfeatures = 2000, verbose = F)
-spl_seurat <- ScaleData(spl_seurat, verbose = F)
-spl_seurat <- RunPCA(spl_seurat, npcs = 30, verbose = F)
-spl_seurat <- RunUMAP(spl_seurat, reduction = "pca", dims = 1:30, verbose = F)
 
-DimPlot(spl_seurat,reduction = "umap") +
-  plot_annotation(title = "Spleen, before integration")
-
-# the integrated assay (it’s already normalized and HVGs are selected)
+# PCA and UMAP
 DefaultAssay(spl_seurat) <- "integrated"
 spl_seurat <- ScaleData(spl_seurat, verbose = F)
 spl_seurat <- RunPCA(spl_seurat, npcs = 30, verbose = F)
@@ -168,82 +161,330 @@ DimPlot(spl_seurat, reduction = "umap") +
 # split
 DimPlot(spl_seurat, reduction = "umap", split.by = "orig.ident") + NoLegend()
 
-# let's cluster
-spl_seurat <- FindNeighbors(spl_seurat, dims = 1:30, k.param = 10, verbose = F)
-spl_seurat <- FindClusters(spl_seurat, verbose = F)
-# spl_seurat <- FindClusters(spl_seurat, verbose = F, resolution = 0.1)
-DimPlot(spl_seurat,label = T) + NoLegend()
+# clustering
+# to test several clusters
 
+# let's cluster with 0.2 resolution
+spl_seurat <- FindNeighbors(spl_seurat, dims = 1:30, k.param = 10, verbose = F)
+spl_seurat <- FindClusters(spl_seurat, verbose = F, resolution = 0.2)
+DimPlot(spl_seurat,label = T) + NoLegend()
 
 
 # to test several clusters
 for (res in c(0.05, 0.1, 0.2, 0.3, 0.5, 0.8)) {
-  spl_seurat <- FindClusters(spl_seurat, resolution = res, verbose = FALSE)
-  print(DimPlot(spl_seurat, label = TRUE) + ggtitle(paste("Resolution", res)))
+  bm_seurat <- FindClusters(bm_seurat, resolution = res, verbose = FALSE)
+  print(DimPlot(bm_seurat, label = TRUE) + ggtitle(paste("Resolution", res)))
 }
+
 
 # table with the cluster
 count_table <- table(spl_seurat@meta.data$seurat_clusters, spl_seurat@meta.data$orig.ident)
 count_table
 
-### annotation
+# marker genes
+markers_spl <- FindAllMarkers(
+  spl_seurat,
+  only.pos = TRUE,        # solo genes sobreexpresados
+  min.pct = 0.25,         # al menos 25% de las células del cluster
+  logfc.threshold = 0.25, # diferencia mínima
+  verbose = FALSE
+)
 
-# Extraer las matrices de cada muestra
-expr_WT <- GetAssayData(spl_seurat, assay = "RNA", layer = "data.spl_WT")
-expr_KO <- GetAssayData(spl_seurat, assay = "RNA", layer = "data.spl_KO")
+# Exportar listas para STRING
+# guardar todos los marcadores por cluster
+write.csv(markers_spl, "OUTPUT/markers_all_clusters_res0.2_spleen.csv", row.names = FALSE)
 
-# Combina columnas (células) de ambos
-expr <- cbind(expr_WT, expr_KO)
 
+for (cl in unique(top10_by_cluster$cluster)) {
+  genes <- top10_by_cluster %>%
+    filter(cluster == cl) %>%
+    pull(gene)
+  
+  write.table(
+    genes,
+    paste0("OUTPUT/cluster_", cl, "_top10.txt"),
+    quote = FALSE,
+    row.names = FALSE,
+    col.names = FALSE
+  )
+}
+
+# para plotear todo
+
+# Paso 1: Define las anotaciones para los 16 clústeres
+annotations <- c(
+  "B cells",                    # cluster 0
+  "Ribonucleoproteins",         # cluster 1
+  "MHC",                        # cluster 2
+  "Chaperone protein folding",  # cluster 3
+  "Macrophages-innate response",  # cluster 4
+  "Macrophages-phagocytosis",   # cluster 5
+  "T cell activation",          # cluster 6
+  "NK regulation",          # cluster 7
+  "DNA replication",                  # cluster 8
+  "ERAD-pathway",    # cluster 9
+  "DNA replication",          # cluster 10
+  "Antigen presentation",      # cluster 11
+  "Nitrogen metabolism",                   # cluster 12
+  "Granulocytes",          # cluster 13
+  "DNA replication", # cluster 14
+  "NK regulation",       # cluster 15
+  "NK cells", # cluster 16
+  "NK regulation", # cluster 17
+  "Leukocyte"  # cluster 18
+)
+
+# Asegurar que las anotaciones estén bien nombradas
+names(annotations) <- as.character(0:18)
+
+# Paso 2: Obtener el vector de clúster por celda
+cluster_ids <- spl_seurat$seurat_clusters
+names(cluster_ids) <- colnames(spl_seurat)
+
+# Paso 3: Mapear anotaciones por celda
+cluster_annotations <- annotations[as.character(cluster_ids)]
+
+# Paso 4: Añadir al metadata
+spl_seurat@meta.data$cluster_annotation_string <- cluster_annotations
+
+# Visualizar
+DimPlot(spl_seurat, group.by = "cluster_annotation_string", label = TRUE, repel = TRUE) + NoLegend()
+
+
+
+#### compositional data analysis
+
+# Calcular tabla de conteo por cluster y condición
+count_table <- table(spl_seurat@meta.data$seurat_clusters, spl_seurat@meta.data$orig.ident)
+
+# Convertir a matriz y normalizar a proporciones
+counts <- as.matrix(count_table)
+counts[counts == 0] <- 1e-6
+props <- sweep(counts, 2, colSums(counts), FUN = "/")
+
+# Crear data.frame largo
+df_long <- data.frame(
+  cluster = rep(rownames(props), times = ncol(props)),
+  condition = rep(colnames(props), each = nrow(props)),
+  proportion = as.vector(props)
+)
+
+# Mapear nombres descriptivos de los clusters
+df_long$cluster_name <- annotations[as.character(df_long$cluster)]
+
+# Definir orden de las condiciones (WT primero, luego KO)
+df_long$condition <- factor(df_long$condition, levels = c("spl_WT", "splKO"))
+
+# Ordenar clusters por nombre (o en el orden original si prefieres)
+df_long$cluster_name <- factor(df_long$cluster_name, levels = unique(annotations))
+
+# Crear paleta de colores sin repetir
+n_clusters <- length(unique(df_long$cluster_name))
+colors <- colorRampPalette(brewer.pal(12, "Paired"))(n_clusters)
+
+# Gráfico final con nombres de clúster
+ggplot(df_long, aes(x=condition, y=proportion, fill=cluster_name)) +
+  geom_bar(stat="identity") +
+  theme_minimal() +
+  ylab("Cell proportions") +
+  xlab("Condition") +
+  scale_fill_manual(values=colors, name="Cluster") +
+  ggtitle("Cluster distribution by condition") +
+  theme(axis.text.x = element_text(angle=45, hjust=1))
+
+# algo de estadística
+# primero, hay diferencias entre wt y ko?
+chisq.test(counts)
+
+# ahora, vamos necesitamos construir una tabla 2×2 para cada cluster, comparando:
+# ese cluster vs todos los demás, en las dos condiciones (spl_KO, spl_WT)
+# el test evalúa si ese cluster está sobrerrepresentado o infrarrepresentado en KO respecto a WT.
+
+pvals <- apply(counts, 1, function(x) {
+  # x = c(spl_KO_cluster, spl_WT_cluster)
+  rest_KO <- sum(counts[, "spl_KO"]) - x[1]
+  rest_WT <- sum(counts[, "spl_WT"]) - x[2]
+  
+  mat <- matrix(c(x[1], x[2], rest_KO, rest_WT), nrow = 2)
+  fisher.test(mat)$p.value
+})
+# Añadimos resultados
+results <- data.frame(
+  Cluster = rownames(counts),
+  p.value = pvals,
+  adj.p.value = p.adjust(pvals, method = "BH")
+)
+# Log2 fold change de proporción KO vs WT
+log2fc <- log2(props[, "spl_KO"] / props[, "spl_WT"])
+results$log2FC <- log2fc
+results <- results[order(results$p.value), ]
+#### compositional data analysis
+
+# Calcular tabla de conteo por cluster y condición
+count_table <- table(spl_seurat@meta.data$seurat_clusters, spl_seurat@meta.data$orig.ident)
+
+# Convertir a matriz y normalizar a proporciones
+counts <- as.matrix(count_table)
+counts[counts == 0] <- 1e-6
+props <- sweep(counts, 2, colSums(counts), FUN = "/")
+
+# Crear data.frame largo
+df_long <- data.frame(
+  cluster = rep(rownames(props), times = ncol(props)),
+  condition = rep(colnames(props), each = nrow(props)),
+  proportion = as.vector(props)
+)
+
+# Mapear nombres descriptivos de los clusters
+df_long$cluster_name <- annotations[as.character(df_long$cluster)]
+
+# Definir orden de las condiciones (WT primero, luego KO)
+df_long$condition <- factor(df_long$condition, levels = c("spl_WT", "splKO"))
+
+# Ordenar clusters por nombre (o en el orden original si prefieres)
+df_long$cluster_name <- factor(df_long$cluster_name, levels = unique(annotations))
+
+# Crear paleta de colores sin repetir
+n_clusters <- length(unique(df_long$cluster_name))
+colors <- colorRampPalette(brewer.pal(12, "Paired"))(n_clusters)
+
+# Gráfico final con nombres de clúster
+ggplot(df_long, aes(x=condition, y=proportion, fill=cluster_name)) +
+  geom_bar(stat="identity") +
+  theme_minimal() +
+  ylab("Cell proportions") +
+  xlab("Condition") +
+  scale_fill_manual(values=colors, name="Cluster") +
+  ggtitle("Cluster distribution by condition") +
+  theme(axis.text.x = element_text(angle=45, hjust=1))
+
+# algo de estadística
+# primero, hay diferencias entre wt y ko?
+chisq.test(counts)
+
+# ahora, vamos necesitamos construir una tabla 2×2 para cada cluster, comparando:
+# ese cluster vs todos los demás, en las dos condiciones (spl_KO, spl_WT)
+# el test evalúa si ese cluster está sobrerrepresentado o infrarrepresentado en KO respecto a WT.
+
+pvals <- apply(counts, 1, function(x) {
+  # x = c(spl_KO_cluster, spl_WT_cluster)
+  rest_KO <- sum(counts[, "spl_KO"]) - x[1]
+  rest_WT <- sum(counts[, "spl_WT"]) - x[2]
+  
+  mat <- matrix(c(x[1], x[2], rest_KO, rest_WT), nrow = 2)
+  fisher.test(mat)$p.value
+})
+# Añadimos resultados
+results <- data.frame(
+  Cluster = rownames(counts),
+  p.value = pvals,
+  adj.p.value = p.adjust(pvals, method = "BH")
+)
+# Log2 fold change de proporción KO vs WT
+log2fc <- log2(props[, "spl_KO"] / props[, "spl_WT"])
+results$log2FC <- log2fc
+results <- results[order(results$p.value), ]
+# Añadir nombres descriptivos de los clusters
+results$cluster_name <- annotations[as.character(results$Cluster)]
+
+# podemos plotear
+ggplot(results, aes(x = log2FC, y = -log10(p.value), label = cluster_name)) +
+  geom_point(aes(color = adj.p.value < 0.05), size = 3, alpha = 0.8) +
+  geom_text(data = subset(results, adj.p.value < 0.05),
+            vjust = -0.8, size = 3.2, color = "black") +
+  scale_color_manual(values = c("grey60", "red")) +
+  theme_minimal() +
+  labs(x = "log2(FC KO vs WT)",
+       y = "-log10(p-value)",
+       color = "Significant (FDR < 0.05)",
+       title = "Cluster proportion changes (KO vs WT)") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50")
+
+
+
+# Diferencia relativa por cluster (descriptivo)
+# Barras naranjas → más abundantes en KO
+# Barras darkred → más abundantes en WT
+
+# Cluster como factor, niveles invertidos para coord_flip()
+diff_df$cluster <- factor(diff_df$cluster, levels = rev(as.character(0:18)))
+
+# Gráfico
+ggplot(diff_df, aes(x=cluster, y=diff, fill=diff > 0)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=c("darkred","orange"), guide=FALSE) +
+  theme_minimal() +
+  ylab("Difference KO - WT") +
+  xlab("Cluster") +
+  ggtitle("Clusters changing between KO and WT") +
+  coord_flip()
+
+
+
+
+
+
+
+# Guardar varios objetos juntos
+saveRDS(spl_seurat, file = "OUTPUT/spleen_SEURAT.rds")
+# Cargar un objeto cuando lo necesites
+res1 <- readRDS("OUTPUT/spleen_SEURAT")
+
+
+
+
+### annotation unbiased using reference
+
+expr <- GetAssayData(spl_seurat, assay = "integrated", slot = "data")
 
 spl_sce <- SingleCellExperiment(
   assays = list(logcounts = expr),
   colData = spl_seurat@meta.data
 )
 
-
-# mouse inmune reference
-ref <- celldex::ImmGenData()
+# Referencia de ratón
 # otro puede ser:
 # MouseRNAseqData()
-# ImmGenData
+ref <- celldex::ImmGenData()
 
-# Corre SingleR para anotar
 pred_spl <- SingleR(test = spl_sce, ref = ref, labels = ref$label.fine)
 
-# Añade la anotación a tu objeto Seurat
+# Añadir anotación al Seurat
 spl_seurat$SingleR_labels <- pred_spl$labels
-
-# Acorta los labels (esto es solo un ejemplo, puedes adaptarlo)
 spl_seurat$SingleR_clean <- gsub("\\s*\\([^\\)]+\\)", "", spl_seurat$SingleR_labels)
 
-# Visualiza con nombres más cortos
 DimPlot(spl_seurat, group.by = "SingleR_clean", label = TRUE, repel = TRUE) + NoLegend()
 
 
-# para anotar los clusteres
 
-# 1. Extraer metadata
-meta <- spl_seurat@meta.data
 
-# 2. Crear tabla con la anotación más frecuente por clúster
-annot_df <- meta %>%
-  mutate(cluster = as.character(seurat_clusters)) %>%
-  group_by(cluster) %>%
-  count(SingleR_clean) %>%
-  slice_max(n, n = 1, with_ties = FALSE) %>%
-  ungroup()
 
-# 3. Crear un vector de anotación por clúster
-annot_vec <- setNames(annot_df$SingleR_clean, annot_df$cluster)
 
-# 4. Asignar anotaciones a cada célula usando su clúster
-meta$cluster_annotation <- annot_vec[as.character(meta$seurat_clusters)]
 
-# 5. Asegurarse de que se guarda en el objeto Seurat
-spl_seurat@meta.data <- meta
 
-DimPlot(spl_seurat, group.by = "cluster_annotation", label = TRUE, repel = TRUE) + NoLegend()
+
+
+
+
+#### compositional data analysis
+
+# 3) Preparar vectores para propeller
+clusters_vec <- factor(md$cluster_annotation_string)   # cluster por célula
+sample_vec   <- factor(md$orig.ident)                  # muestra/ratón por célula
+group_vec    <- factor(md$condition)                   # grupo (WT/KO) por célula
+
+
+# 4) Ejecutar propeller
+# transform: "logit" o "asin". Prueba ambos si quieres comparar.
+prop_res <- propeller(
+  clusters = clusters_vec,
+  sample = sample_vec,
+  group = group_vec,
+  transform = "logit",   # o "asin"
+  robust = TRUE,         # usa estimadores robustos de varianza (recomendado)
+  trend = FALSE          # si quieres ajustar tendencia mean-variance
+)
+
 
 
 
@@ -269,63 +510,6 @@ FeaturePlot(
 
 
 
-# para buscar marcadores de cada cluster:
-
-DefaultAssay(spl_seurat) <- "RNA"
-spl_seurat <- JoinLayers(spl_seurat)
-# findallmarkers
-markers_spl <- FindAllMarkers(spl_seurat, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
-head(markers_spl)
-# write.csv(markers_spl, "markers_spleen.csv")
-
-# top genes per cluster
-top10 <- markers_spl %>%
-  group_by(cluster) %>%
-  top_n(n = 10, wt = avg_log2FC)
-# Opcional: heatmap con top genes
-DoHeatmap(spl_seurat, features = top10$gene) + NoLegend()
-
-# para plotear todo
-
-# Paso 1: Define las anotaciones para los 16 clústeres
-annotations <- c(
-  "B cells",                    # cluster 0
-  "T cells",                    # cluster 1
-  "T cell activation",          # cluster 2
-  "Neutrophils",                # cluster 3
-  "T cells",                    # cluster 4
-  "Vesicle-mediated transport", # cluster 5
-  "Antigen presentation",       # cluster 6
-  "T cell activation",          # cluster 7
-  "ER-stress",                  # cluster 8
-  "Chromosome seggregation",    # cluster 9
-  "B cell activation",          # cluster 10
-  "Neutrophil activation",      # cluster 11
-  "NK cells",                   # cluster 12
-  "T cells/ribosomes",          # cluster 13
-  "Myeloid cell differentiation", # cluster 14
-  "Leukocyte/granulocyte"       # cluster 15
-)
-
-# Asegurar que las anotaciones estén bien nombradas
-names(annotations) <- as.character(0:15)
-
-# Paso 2: Obtener el vector de clúster por celda
-cluster_ids <- spl_seurat$seurat_clusters
-names(cluster_ids) <- colnames(spl_seurat)
-
-# Paso 3: Mapear anotaciones por celda
-cluster_annotations <- annotations[as.character(cluster_ids)]
-
-# Paso 4: Añadir al metadata
-spl_seurat@meta.data$cluster_annotation_string <- cluster_annotations
-
-# Visualizar
-DimPlot(spl_seurat, group.by = "cluster_annotation_string", label = TRUE, repel = TRUE) + NoLegend()
-
-
-
-
 
 # para chequear marcadores:
 FeaturePlot(spl_seurat, features = c("Adgre1", "Cd68", "Hba-a1", "Ly6g"), label = TRUE)
@@ -342,165 +526,89 @@ head(markers)
 ############ BONE MARROW ###############
 ########################################
 
-# integration
-# creat a list
-bm_list <- list()
-bm_list[["bm_WT"]] <- bm_WT_obj
-bm_list[["bm_KO"]] <- bm_KO_obj
+# filter
+bm_WT_obj_pass <- subset(bm_WT_obj, subset = QC == "Pass")
+bm_KO_obj_pass <- subset(bm_KO_obj, subset = QC == "Pass")
 
-# normalize/find HVG
+bm_WT_obj_pass$condition <- "WT"
+bm_KO_obj_pass$condition <- "KO"
+
+# integration and normalization
+
+# list creation
+bm_list <- list(bm_WT = bm_WT_obj_pass, bm_KO = bm_KO_obj_pass)
+# normalization
 for (i in 1:length(bm_list)) {
   bm_list[[i]] <- NormalizeData(bm_list[[i]], verbose = F)
   bm_list[[i]] <- FindVariableFeatures(bm_list[[i]], selection.method = "vst", nfeatures = 2000, verbose = F)
 }
+
 # to find integration anchors and actually perform integration
-# it takes time...
 bm_anchors <- FindIntegrationAnchors(object.list = bm_list, dims = 1:30)
 bm_seurat <- IntegrateData(anchorset = bm_anchors, dims = 1:30)
-# to save ram
-rm(bm_list)
-rm(bm_anchors)
 
-# before integration
-DefaultAssay(bm_seurat) <- "RNA"
-bm_seurat <- NormalizeData(bm_seurat, verbose = F)
-bm_seurat <- FindVariableFeatures(bm_seurat, selection.method = "vst", nfeatures = 2000, verbose = F)
+# to save ram
+rm(bm_list, bm_anchors)
+
+
+# PCA and UMAP
+DefaultAssay(bm_seurat) <- "integrated"
 bm_seurat <- ScaleData(bm_seurat, verbose = F)
 bm_seurat <- RunPCA(bm_seurat, npcs = 30, verbose = F)
 bm_seurat <- RunUMAP(bm_seurat, reduction = "pca", dims = 1:30, verbose = F)
 
-DimPlot(bm_seurat,reduction = "umap") +
-  plot_annotation(title = "Bone marrow, before integration")
-
-# the integrated assay (it’s already normalized and HVGs are selected)
-DefaultAssay(bm_seurat) <- "integrated"
-bm_seurat <- ScaleData(bm_seurat, verbose = F)
-bm_seurat <- RunPCA(bm_seurat, npcs = 10, verbose = F)
-bm_seurat <- RunUMAP(bm_seurat, reduction = "pca", dims = 1:10, verbose = F)
-
 DimPlot(bm_seurat, reduction = "umap") + 
-  plot_annotation(title = "Bone marrow, after integration (Seurat 3)")
+  plot_annotation(title = "bmeen, after integration (Seurat 3)")
 
 # split
 DimPlot(bm_seurat, reduction = "umap", split.by = "orig.ident") + NoLegend()
 
-# let's cluster
-bm_seurat <- FindNeighbors(bm_seurat, dims = 1:10, k.param = 10, verbose = F)
-# less resolution, less clusters
-bm_seurat <- FindClusters(bm_seurat, verbose = F, resolution = 0.1)
+# clustering
+# to test several clusters
+# let's cluster with 0.2 resolution
+bm_seurat <- FindNeighbors(bm_seurat, dims = 1:30, k.param = 10, verbose = F)
+bm_seurat <- FindClusters(bm_seurat, verbose = F, resolution = 0.2)
 DimPlot(bm_seurat,label = T) + NoLegend()
 
-plot_integrated_clusters(bm_seurat)
 
-# number of cells for each cluster
-count_table_bm <- table(bm_seurat@meta.data$seurat_clusters, bm_seurat@meta.data$orig.ident)
-count_table_bm
+# table with the cluster
+count_table <- table(bm_seurat@meta.data$seurat_clusters, bm_seurat@meta.data$orig.ident)
+kable(count_table)
 
 
-### annotation
-
-# Extraer las matrices de cada muestra
-expr_WT_bm <- GetAssayData(bm_seurat, assay = "RNA", layer = "data.bm_WT")
-expr_KO_bm <- GetAssayData(bm_seurat, assay = "RNA", layer = "data.bm_KO")
-
-# Combina columnas (células) de ambos
-expr_bm <- cbind(expr_WT_bm, expr_KO_bm)
-
-bm_sce <- SingleCellExperiment(
-  assays = list(logcounts = expr_bm),
-  colData = bm_seurat@meta.data
+# marker genes
+markers_bm <- FindAllMarkers(
+  bm_seurat,
+  only.pos = TRUE,        # solo genes sobreexpresados
+  min.pct = 0.25,         # al menos 25% de las células del cluster
+  logfc.threshold = 0.25, # diferencia mínima
+  verbose = FALSE
 )
 
-# annotation
+# Exportar listas para STRING
+# guardar todos los marcadores por cluster
+write.csv(markers_bm, "OUTPUT/markers_all_clusters_res0.2_bm.csv", row.names = FALSE)
 
-# mouse inmune reference
-ref <- celldex::ImmGenData()
+##  Manual annotation using STRING-db
 
-# Corre SingleR para anotar
-pred_bm <- SingleR(test = bm_sce, ref = ref, labels = ref$label.fine)
-
-# Añade la anotación a tu objeto Seurat
-bm_seurat$SingleR_labels <- pred_bm$labels
-# limpiamos
-bm_seurat$SingleR_clean <- gsub("\\s*\\([^\\)]+\\)", "", bm_seurat$SingleR_labels)
-
-# Visualiza con nombres más cortos
-DimPlot(bm_seurat, group.by = "SingleR_clean", label = TRUE, repel = TRUE) + NoLegend()
-
-
-# para anotar los clusteres
-
-# 1. Extraer metadata
-meta <- bm_seurat@meta.data
-
-# 2. Crear tabla con la anotación más frecuente por clúster
-annot_df <- meta %>%
-  mutate(cluster = as.character(seurat_clusters)) %>%
-  group_by(cluster) %>%
-  count(SingleR_clean) %>%
-  slice_max(n, n = 1, with_ties = FALSE) %>%
-  ungroup()
-
-# 3. Crear un vector de anotación por clúster
-annot_vec <- setNames(annot_df$SingleR_clean, annot_df$cluster)
-
-# 4. Asignar anotaciones a cada célula usando su clúster
-meta$cluster_annotation <- annot_vec[as.character(meta$seurat_clusters)]
-
-# 5. Asegurarse de que se guarda en el objeto Seurat
-bm_seurat@meta.data <- meta
-
-DimPlot(bm_seurat, group.by = "cluster_annotation", label = TRUE, repel = TRUE) + NoLegend()
-
-# ploteamos los porcentajes
-plot_integrated_clusters_annotated(bm_seurat)
-
-# volcano plot 
-VlnPlot(
-  bm_seurat,
-  features = "H2ax",
-  group.by = "cluster_annotation",   # usa la anotación en lugar del número
-  split.by = "orig.ident"            # WT vs KO
-) + 
-  ggtitle("H2ax expression by annotated clusters (WT vs KO)")
-
-
-
-
-
-
-# to annotate manually
-
-# para buscar marcadores de cada cluster:
-
-DefaultAssay(bm_seurat) <- "RNA"
-bm_seurat <- JoinLayers(bm_seurat)
-# findallmarkers
-markers_bm <- FindAllMarkers(bm_seurat, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
-head(markers_bm)
-#write.csv(markers_bm, "OUTPUT/markers_bonemarrow.csv")
-
-# para plotear todo
-
-
-# Paso 1: Define las anotaciones para los 13 clústeres
+# Paso 1: Define las anotaciones para los 16 clústeres
 annotations <- c(
-  "Ribosomal-B cells",          # cluster 0
-  "T cells",                    # cluster 1
-  "T cell activation",          # cluster 2
-  "Neutrophils/Macrophages",    # cluster 3
-  "T cells",                    # cluster 4
-  "Vesicle-mediated transport", # cluster 5
-  "Antigen presentation/Macrophages",# cluster 6
-  "T cell activation",          # cluster 7
-  "ER-stress/Pancreas",         # cluster 8
-  "Chromosome seggregation",    # cluster 9
-  "B cell activation",          # cluster 10
-  "Neutrophil activation",      # cluster 11
-  "NK cells",                   # cluster 12
-  "T cell",                     # cluster 13
-  "Myeloid cell differentiation",      # cluster 14
-  "Granulocyte",                   # cluster 15
+  "Macrophages/interferon",  # cluster 0
+  "Platelet",                # cluster 1
+  "DNA replication",         # cluster 2
+  "T cells",                 # cluster 3
+  "B cells",                 # cluster 4
+  "Protein folding",         # cluster 5
+  "Phagocytosis",            # cluster 6
+  "Erythrocytes",            # cluster 7
+  "Megakaryocytes",          # cluster 8
+  "Platelet",                # cluster 9
+  "Cell migration",          # cluster 10
+  "B cells/ERAD",            # cluster 11
+  "Antigen presentation",    # cluster 12
+  "Cell migration",          # cluster 13
+  "Antigen presentation",    # cluster 14
+  "NK"                       # cluster 15
 )
 
 # Asegurar que las anotaciones estén bien nombradas
@@ -518,4 +626,248 @@ bm_seurat@meta.data$cluster_annotation_string <- cluster_annotations
 
 # Visualizar
 DimPlot(bm_seurat, group.by = "cluster_annotation_string", label = TRUE, repel = TRUE) + NoLegend()
+
+
+#### compositional data analysis
+
+# Calcular tabla de conteo por cluster y condición
+count_table <- table(bm_seurat@meta.data$seurat_clusters, bm_seurat@meta.data$orig.ident)
+
+# Convertir a matriz y normalizar a proporciones
+counts <- as.matrix(count_table)
+counts[counts == 0] <- 1e-6
+props <- sweep(counts, 2, colSums(counts), FUN = "/")
+
+# Crear data.frame largo
+df_long <- data.frame(
+  cluster = rep(rownames(props), times = ncol(props)),
+  condition = rep(colnames(props), each = nrow(props)),
+  proportion = as.vector(props)
+)
+
+# Mapear nombres descriptivos de los clusters
+df_long$cluster_name <- annotations[as.character(df_long$cluster)]
+
+# Definir orden de las condiciones (WT primero, luego KO)
+df_long$condition <- factor(df_long$condition, levels = c("bm_WT", "bm_KO"))
+
+# Ordenar clusters por nombre (o en el orden original si prefieres)
+df_long$cluster_name <- factor(df_long$cluster_name, levels = unique(annotations))
+
+# Crear paleta de colores sin repetir
+n_clusters <- length(unique(df_long$cluster_name))
+colors <- colorRampPalette(brewer.pal(12, "Paired"))(n_clusters)
+
+# Gráfico final con nombres de clúster
+ggplot(df_long, aes(x=condition, y=proportion, fill=cluster_name)) +
+  geom_bar(stat="identity") +
+  theme_minimal() +
+  ylab("Cell proportions") +
+  xlab("Condition") +
+  scale_fill_manual(values=colors, name="Cluster") +
+  ggtitle("Cluster distribution by condition") +
+  theme(axis.text.x = element_text(angle=45, hjust=1))
+
+### Immune data
+
+### annotation unbiased using reference
+
+expr <- GetAssayData(bm_seurat, assay = "integrated", slot = "data")
+
+bm_sce <- SingleCellExperiment(
+  assays = list(logcounts = expr),
+  colData = bm_seurat@meta.data
+)
+
+# Referencia de ratón
+# otro puede ser:
+# MouseRNAseqData()
+ref <- celldex::ImmGenData()
+
+pred_bm <- SingleR(test = bm_sce, ref = ref, labels = ref$label.fine)
+
+# Añadir anotación al Seurat
+bm_seurat$SingleR_labels <- pred_bm$labels
+bm_seurat$SingleR_clean <- gsub("\\s*\\([^\\)]+\\)", "", bm_seurat$SingleR_labels)
+
+DimPlot(bm_seurat, group.by = "SingleR_clean", label = TRUE, repel = TRUE) + NoLegend()
+
+#### compositional data analysis
+
+#  count_table con nombres de clusters reales
+count_table <- table(bm_seurat@meta.data$SingleR_clean,
+                     bm_seurat@meta.data$orig.ident)
+
+# Convertir a matriz
+counts <- as.matrix(count_table)
+
+# Reemplazar ceros por un valor pequeño
+counts[counts == 0] <- 1e-6
+
+# Proporciones por columna
+props <- sweep(counts, 2, colSums(counts), FUN = "/")
+
+# df_long
+df_long <- data.frame(
+  cluster = rep(rownames(props), times = ncol(props)),
+  condition = rep(colnames(props), each = nrow(props)),
+  proportion = as.vector(props)
+)
+
+# Definir orden de condiciones (WT primero, luego KO)
+df_long$condition <- factor(df_long$condition, levels = c("bm_WT", "bm_KO"))
+
+# Orden de clusters según el orden en props
+df_long$cluster <- factor(df_long$cluster, levels = rownames(props))
+
+# Paleta con colores únicos
+n_clusters <- length(unique(df_long$cluster))
+colors <- colorRampPalette(brewer.pal(12, "Paired"))(n_clusters)
+
+# Gráfico
+ggplot(df_long, aes(x=condition, y=proportion, fill=cluster)) +
+  geom_bar(stat="identity") +
+  theme_minimal() +
+  ylab("Cell proportions") +
+  xlab("Condition") +
+  scale_fill_manual(values=colors, name="Cluster") +
+  ggtitle("Cluster distribution by condition")
+
+# --- Preparación: normalizar por cluster (fila) para que cada cluster sea 100% ---
+# counts: matrix con filas = clusters, columnas = condiciones (ej. bm_KO, bm_WT)
+
+# Normalizar por fila (cada fila suma 1)
+row_props <- sweep(counts, 1, rowSums(counts), FUN = "/")
+# Convertir a porcentajes
+row_percent <- row_props * 100
+
+# Asegurar orden de clusters si tienen nombres numéricos:
+if(all(rownames(row_percent) %in% as.character(as.numeric(rownames(row_percent))))) {
+  row_percent <- row_percent[order(as.numeric(rownames(row_percent))), drop = FALSE]
+}
+
+# Transponer para heatmap: filas = condiciones, columnas = clusters
+heatmap_mat <- t(row_percent)
+
+# Reordenar filas (condiciones) si quieres WT primero:
+desired_cond_order <- c("bm_WT", "bm_KO")
+if(all(desired_cond_order %in% rownames(heatmap_mat))) {
+  heatmap_mat <- heatmap_mat[desired_cond_order, drop = FALSE]
+}
+
+pheatmap(
+  heatmap_mat,
+  cluster_rows = FALSE,   # no reagrupar condiciones
+  cluster_cols = FALSE,   # no reagrupar clusters
+  color = colorRampPalette(c("white", "steelblue"))(100),
+  display_numbers = TRUE,
+  number_format = "%.1f", # formato con 1 decimal
+  fontsize_number = 10,
+  main = "Percentage of cells per cluster (each cluster = 100%)",
+  legend = TRUE,
+  angle_col = 45
+)
+
+
+### MouseRNAseqData
+
+### annotation unbiased using reference
+
+expr <- GetAssayData(bm_seurat, assay = "integrated", slot = "data")
+
+bm_sce <- SingleCellExperiment(
+  assays = list(logcounts = expr),
+  colData = bm_seurat@meta.data
+)
+
+# Referencia de ratón
+# otro puede ser:
+# MouseRNAseqData()
+ref <- celldex::MouseRNAseqData()
+
+pred_bm <- SingleR(test = bm_sce, ref = ref, labels = ref$label.fine)
+
+# Añadir anotación al Seurat
+bm_seurat$SingleR_labels <- pred_bm$labels
+bm_seurat$SingleR_clean <- gsub("\\s*\\([^\\)]+\\)", "", bm_seurat$SingleR_labels)
+
+DimPlot(bm_seurat, group.by = "SingleR_clean", label = TRUE, repel = TRUE) + NoLegend()
+
+#### compositional data analysis
+
+#  count_table con nombres de clusters reales
+count_table <- table(bm_seurat@meta.data$SingleR_clean,
+                     bm_seurat@meta.data$orig.ident)
+
+# Convertir a matriz
+counts <- as.matrix(count_table)
+
+# Reemplazar ceros por un valor pequeño
+counts[counts == 0] <- 1e-6
+
+# Proporciones por columna
+props <- sweep(counts, 2, colSums(counts), FUN = "/")
+
+# df_long
+df_long <- data.frame(
+  cluster = rep(rownames(props), times = ncol(props)),
+  condition = rep(colnames(props), each = nrow(props)),
+  proportion = as.vector(props)
+)
+
+# Definir orden de condiciones (WT primero, luego KO)
+df_long$condition <- factor(df_long$condition, levels = c("bm_WT", "bm_KO"))
+
+# Orden de clusters según el orden en props
+df_long$cluster <- factor(df_long$cluster, levels = rownames(props))
+
+# Paleta con colores únicos
+n_clusters <- length(unique(df_long$cluster))
+colors <- colorRampPalette(brewer.pal(12, "Paired"))(n_clusters)
+
+# Gráfico
+ggplot(df_long, aes(x=condition, y=proportion, fill=cluster)) +
+  geom_bar(stat="identity") +
+  theme_minimal() +
+  ylab("Cell proportions") +
+  xlab("Condition") +
+  scale_fill_manual(values=colors, name="Cluster") +
+  ggtitle("Cluster distribution by condition")
+
+# --- Preparación: normalizar por cluster (fila) para que cada cluster sea 100% ---
+# counts: matrix con filas = clusters, columnas = condiciones (ej. bm_KO, bm_WT)
+
+# Normalizar por fila (cada fila suma 1)
+row_props <- sweep(counts, 1, rowSums(counts), FUN = "/")
+# Convertir a porcentajes
+row_percent <- row_props * 100
+
+# Asegurar orden de clusters si tienen nombres numéricos:
+if(all(rownames(row_percent) %in% as.character(as.numeric(rownames(row_percent))))) {
+  row_percent <- row_percent[order(as.numeric(rownames(row_percent))), drop = FALSE]
+}
+
+# Transponer para heatmap: filas = condiciones, columnas = clusters
+heatmap_mat <- t(row_percent)
+
+# Reordenar filas (condiciones) si quieres WT primero:
+desired_cond_order <- c("bm_WT", "bm_KO")
+if(all(desired_cond_order %in% rownames(heatmap_mat))) {
+  heatmap_mat <- heatmap_mat[desired_cond_order, drop = FALSE]
+}
+
+pheatmap(
+  heatmap_mat,
+  cluster_rows = FALSE,   # no reagrupar condiciones
+  cluster_cols = FALSE,   # no reagrupar clusters
+  color = colorRampPalette(c("white", "steelblue"))(100),
+  display_numbers = TRUE,
+  number_format = "%.1f", # formato con 1 decimal
+  fontsize_number = 10,
+  main = "Percentage of cells per cluster (each cluster = 100%)",
+  legend = TRUE,
+  angle_col = 45
+)
+
+
 
