@@ -1,6 +1,7 @@
 ########################################
 ############### PACKAGES ###############
 ########################################
+
 library(Seurat)
 library(ggplot2)
 library(SingleR)
@@ -14,6 +15,9 @@ library(hdf5r)
 library(speckle)
 library(tidyverse)
 library(compositions)
+library(knitr)
+library(pheatmap)
+library(ggalluvial)
 
 ########################################
 ############### DATA IMPORT ############
@@ -157,7 +161,7 @@ spl_seurat <- RunUMAP(spl_seurat, reduction = "pca", dims = 1:30, verbose = F)
 
 DimPlot(spl_seurat, reduction = "umap") + 
   plot_annotation(title = "Spleen, after integration (Seurat 3)")
-
+spl_seurat$orig.ident <- factor(spl_seurat$orig.ident, levels = c("spl_WT", "spl_KO"))
 # split
 DimPlot(spl_seurat, reduction = "umap", split.by = "orig.ident") + NoLegend()
 
@@ -171,8 +175,8 @@ DimPlot(spl_seurat,label = T) + NoLegend()
 
 
 # to test several clusters
-for (res in c(0.05, 0.1, 0.2, 0.3, 0.5, 0.8)) {
-  bm_seurat <- FindClusters(bm_seurat, resolution = res, verbose = FALSE)
+#for (res in c(0.05, 0.1, 0.2, 0.3, 0.5, 0.8)) {
+  spl_seurat <- FindClusters(bm_seurat, resolution = res, verbose = FALSE)
   print(DimPlot(bm_seurat, label = TRUE) + ggtitle(paste("Resolution", res)))
 }
 
@@ -192,22 +196,22 @@ markers_spl <- FindAllMarkers(
 
 # Exportar listas para STRING
 # guardar todos los marcadores por cluster
-write.csv(markers_spl, "OUTPUT/markers_all_clusters_res0.2_spleen.csv", row.names = FALSE)
+# write.csv(markers_spl, "OUTPUT/markers_all_clusters_res0.2_spleen.csv", row.names = FALSE)
 
 
-for (cl in unique(top10_by_cluster$cluster)) {
-  genes <- top10_by_cluster %>%
-    filter(cluster == cl) %>%
-    pull(gene)
+# for (cl in unique(top10_by_cluster$cluster)) {
+  #genes <- top10_by_cluster %>%
+    #filter(cluster == cl) %>%
+    #pull(gene)
   
-  write.table(
-    genes,
-    paste0("OUTPUT/cluster_", cl, "_top10.txt"),
-    quote = FALSE,
-    row.names = FALSE,
-    col.names = FALSE
-  )
-}
+  #write.table(
+    #genes,
+    #paste0("OUTPUT/cluster_", cl, "_top10.txt"),
+    #quote = FALSE,
+    #row.names = FALSE,
+    #col.names = FALSE
+  #)
+#}
 
 # para plotear todo
 
@@ -273,7 +277,7 @@ df_long <- data.frame(
 df_long$cluster_name <- annotations[as.character(df_long$cluster)]
 
 # Definir orden de las condiciones (WT primero, luego KO)
-df_long$condition <- factor(df_long$condition, levels = c("spl_WT", "splKO"))
+df_long$condition <- factor(df_long$condition, levels = c("spl_WT", "spl_KO"))
 
 # Ordenar clusters por nombre (o en el orden original si prefieres)
 df_long$cluster_name <- factor(df_long$cluster_name, levels = unique(annotations))
@@ -292,71 +296,58 @@ ggplot(df_long, aes(x=condition, y=proportion, fill=cluster_name)) +
   ggtitle("Cluster distribution by condition") +
   theme(axis.text.x = element_text(angle=45, hjust=1))
 
-# algo de estadística
-# primero, hay diferencias entre wt y ko?
-chisq.test(counts)
 
-# ahora, vamos necesitamos construir una tabla 2×2 para cada cluster, comparando:
-# ese cluster vs todos los demás, en las dos condiciones (spl_KO, spl_WT)
-# el test evalúa si ese cluster está sobrerrepresentado o infrarrepresentado en KO respecto a WT.
+# Promedios por cluster y condición (por si hay replicados)
+df_summary <- df_long %>%
+  group_by(cluster_name, condition) %>%
+  summarise(mean_prop = mean(proportion), .groups = "drop")
 
-pvals <- apply(counts, 1, function(x) {
-  # x = c(spl_KO_cluster, spl_WT_cluster)
-  rest_KO <- sum(counts[, "spl_KO"]) - x[1]
-  rest_WT <- sum(counts[, "spl_WT"]) - x[2]
-  
-  mat <- matrix(c(x[1], x[2], rest_KO, rest_WT), nrow = 2)
-  fisher.test(mat)$p.value
-})
-# Añadimos resultados
-results <- data.frame(
-  Cluster = rownames(counts),
-  p.value = pvals,
-  adj.p.value = p.adjust(pvals, method = "BH")
-)
-# Log2 fold change de proporción KO vs WT
-log2fc <- log2(props[, "spl_KO"] / props[, "spl_WT"])
-results$log2FC <- log2fc
-results <- results[order(results$p.value), ]
-#### compositional data analysis
+ggplot(df_summary, aes(x=condition, y=mean_prop, group=cluster_name, color=cluster_name)) +
+  geom_line(size=1.2, alpha=0.8) +
+  geom_point(size=3) +
+  theme_minimal(base_size = 14) +
+  ylab("Cell proportion") +
+  xlab("") +
+  ggtitle("Changes in cell type proportions (WT vs KO)") +
+  scale_color_manual(values=colors, name="Cluster") +
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(size=12),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
 
-# Calcular tabla de conteo por cluster y condición
-count_table <- table(spl_seurat@meta.data$seurat_clusters, spl_seurat@meta.data$orig.ident)
+# alluvial plot
 
-# Convertir a matriz y normalizar a proporciones
-counts <- as.matrix(count_table)
-counts[counts == 0] <- 1e-6
-props <- sweep(counts, 2, colSums(counts), FUN = "/")
+df_alluvial <- df_long %>%
+  group_by(cluster_name, condition) %>%
+  summarise(proportion = sum(proportion), .groups = "drop")
 
-# Crear data.frame largo
-df_long <- data.frame(
-  cluster = rep(rownames(props), times = ncol(props)),
-  condition = rep(colnames(props), each = nrow(props)),
-  proportion = as.vector(props)
-)
+# ploteamos
+ggplot(df_alluvial,
+       aes(x = condition,
+           stratum = cluster_name,
+           alluvium = cluster_name,
+           y = proportion,
+           fill = cluster_name)) +
+  geom_alluvium(alpha = 0.6, knot.pos = 0.4) +
+  geom_stratum(alpha = 0.9, color = "grey70") +
+  scale_fill_manual(values = colors, name = "Cluster") +
+  labs(
+    x = "",
+    y = "Cell proportion",
+    title = "Flow of cell type proportions between WT and KO"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "right"
+  )
 
-# Mapear nombres descriptivos de los clusters
-df_long$cluster_name <- annotations[as.character(df_long$cluster)]
 
-# Definir orden de las condiciones (WT primero, luego KO)
-df_long$condition <- factor(df_long$condition, levels = c("spl_WT", "splKO"))
-
-# Ordenar clusters por nombre (o en el orden original si prefieres)
-df_long$cluster_name <- factor(df_long$cluster_name, levels = unique(annotations))
-
-# Crear paleta de colores sin repetir
-n_clusters <- length(unique(df_long$cluster_name))
-colors <- colorRampPalette(brewer.pal(12, "Paired"))(n_clusters)
-
-# Gráfico final con nombres de clúster
-ggplot(df_long, aes(x=condition, y=proportion, fill=cluster_name)) +
-  geom_bar(stat="identity") +
-  theme_minimal() +
-  ylab("Cell proportions") +
-  xlab("Condition") +
-  scale_fill_manual(values=colors, name="Cluster") +
-  ggtitle("Cluster distribution by condition") +
-  theme(axis.text.x = element_text(angle=45, hjust=1))
 
 # algo de estadística
 # primero, hay diferencias entre wt y ko?
@@ -386,6 +377,7 @@ results$log2FC <- log2fc
 results <- results[order(results$p.value), ]
 # Añadir nombres descriptivos de los clusters
 results$cluster_name <- annotations[as.character(results$Cluster)]
+kable(results)
 
 # podemos plotear
 ggplot(results, aes(x = log2FC, y = -log10(p.value), label = cluster_name)) +
@@ -400,9 +392,50 @@ ggplot(results, aes(x = log2FC, y = -log10(p.value), label = cluster_name)) +
        title = "Cluster proportion changes (KO vs WT)") +
   geom_vline(xintercept = 0, linetype = "dashed", color = "grey50")
 
+# --- Preparación: normalizar por cluster (fila) para que cada cluster sea 100% ---
+# counts: matrix con filas = clusters, columnas = condiciones (ej. bm_KO, bm_WT)
+
+# Normalizar por fila (cada fila suma 1)
+row_props <- sweep(counts, 1, rowSums(counts), FUN = "/")
+# Convertir a porcentajes
+
+row_percent <- row_props * 100
+
+# Asegurar orden de clusters si tienen nombres numéricos:
+if(all(rownames(row_percent) %in% as.character(as.numeric(rownames(row_percent))))) {
+  row_percent <- row_percent[order(as.numeric(rownames(row_percent))), , drop = FALSE]
+}
+
+# Transponer para heatmap: filas = condiciones, columnas = clusters
+heatmap_mat <- t(row_percent)
+
+# Reordenar filas (condiciones) si quieres WT primero:
+desired_cond_order <- c("spl_WT", "spl_KO")
+if(all(desired_cond_order %in% rownames(heatmap_mat))) {
+  heatmap_mat <- heatmap_mat[desired_cond_order, , drop = FALSE]
+}
 
 
+pheatmap(
+  heatmap_mat,
+  cluster_rows = FALSE,   # no reagrupar condiciones
+  cluster_cols = FALSE,   # no reagrupar clusters
+  color =  colorRampPalette(c("white", "steelblue"))(100),
+  display_numbers = TRUE,
+  number_format = "%.1f", # formato con 1 decimal
+  fontsize_number = 10,
+  main = "Percentage of cells per cluster (each cluster = 100%)",
+  legend = TRUE,
+  angle_col = 45
+)
+
+
+# si plotteamos el FC por cluster:
 # Diferencia relativa por cluster (descriptivo)
+# Crear tabla de diferencia KO - WT por cluster
+diff_df <- df_long %>%
+  pivot_wider(names_from = condition, values_from = proportion) %>%
+  mutate(diff = spl_KO - spl_WT)
 # Barras naranjas → más abundantes en KO
 # Barras darkred → más abundantes en WT
 
@@ -420,18 +453,7 @@ ggplot(diff_df, aes(x=cluster, y=diff, fill=diff > 0)) +
   coord_flip()
 
 
-
-
-
-
-
-# Guardar varios objetos juntos
-saveRDS(spl_seurat, file = "OUTPUT/spleen_SEURAT.rds")
-# Cargar un objeto cuando lo necesites
-res1 <- readRDS("OUTPUT/spleen_SEURAT")
-
-
-
+### immune annotation
 
 ### annotation unbiased using reference
 
@@ -456,69 +478,180 @@ spl_seurat$SingleR_clean <- gsub("\\s*\\([^\\)]+\\)", "", spl_seurat$SingleR_lab
 DimPlot(spl_seurat, group.by = "SingleR_clean", label = TRUE, repel = TRUE) + NoLegend()
 
 
-
-
-
-
-
-
-
-
-
-
 #### compositional data analysis
 
-# 3) Preparar vectores para propeller
-clusters_vec <- factor(md$cluster_annotation_string)   # cluster por célula
-sample_vec   <- factor(md$orig.ident)                  # muestra/ratón por célula
-group_vec    <- factor(md$condition)                   # grupo (WT/KO) por célula
+#  count_table con nombres de clusters reales
+count_table <- table(spl_seurat@meta.data$SingleR_clean,
+                     spl_seurat@meta.data$orig.ident)
+
+# Convertir a matriz
+counts <- as.matrix(count_table)
+
+# Reemplazar ceros por un valor pequeño
+counts[counts == 0] <- 1e-6
+
+# Proporciones por columna
+props <- sweep(counts, 2, colSums(counts), FUN = "/")
+
+# df_long
+df_long <- data.frame(
+  cluster = rep(rownames(props), times = ncol(props)),
+  condition = rep(colnames(props), each = nrow(props)),
+  proportion = as.vector(props)
+)
+
+# Definir orden de condiciones (WT primero, luego KO)
+df_long$condition <- factor(df_long$condition, levels = c("spl_WT", "spl_KO"))
+
+# Orden de clusters según el orden en props
+df_long$cluster <- factor(df_long$cluster, levels = rownames(props))
+
+# Paleta con colores únicos
+n_clusters <- length(unique(df_long$cluster))
+colors <- colorRampPalette(brewer.pal(12, "Paired"))(n_clusters)
+
+# Gráfico
+ggplot(df_long, aes(x=condition, y=proportion, fill=cluster)) +
+  geom_bar(stat="identity") +
+  theme_minimal() +
+  ylab("Cell proportions") +
+  xlab("Condition") +
+  scale_fill_manual(values=colors, name="Cluster") +
+  ggtitle("Cluster distribution by condition")
 
 
-# 4) Ejecutar propeller
-# transform: "logit" o "asin". Prueba ambos si quieres comparar.
-prop_res <- propeller(
-  clusters = clusters_vec,
-  sample = sample_vec,
-  group = group_vec,
-  transform = "logit",   # o "asin"
-  robust = TRUE,         # usa estimadores robustos de varianza (recomendado)
-  trend = FALSE          # si quieres ajustar tendencia mean-variance
+# --- Preparación: normalizar por cluster (fila) para que cada cluster sea 100% ---
+# counts: matrix con filas = clusters, columnas = condiciones (ej. bm_KO, bm_WT)
+
+# Normalizar por fila (cada fila suma 1)
+row_props <- sweep(counts, 1, rowSums(counts), FUN = "/")
+# Convertir a porcentajes
+row_percent <- row_props * 100
+
+# Asegurar orden de clusters si tienen nombres numéricos:
+if(all(rownames(row_percent) %in% as.character(as.numeric(rownames(row_percent))))) {
+  row_percent <- row_percent[order(as.numeric(rownames(row_percent))), , drop = FALSE]
+}
+
+# Transponer para heatmap: filas = condiciones, columnas = clusters
+heatmap_mat <- t(row_percent)
+
+# Reordenar filas (condiciones) si quieres WT primero:
+desired_cond_order <- c("spl_WT", "spl_KO")
+if(all(desired_cond_order %in% rownames(heatmap_mat))) {
+  heatmap_mat <- heatmap_mat[desired_cond_order, , drop = FALSE]
+}
+
+pheatmap(
+  heatmap_mat,
+  cluster_rows = FALSE,   # no reagrupar condiciones
+  cluster_cols = FALSE,   # no reagrupar clusters
+  color = colorRampPalette(c("white", "steelblue"))(100),
+  display_numbers = TRUE,
+  number_format = "%.1f", # formato con 1 decimal
+  fontsize_number = 10,
+  main = "Percentage of cells per cluster (each cluster = 100%)",
+  legend = TRUE,
+  angle_col = 45
 )
 
 
+# algo de estadística
+# primero, hay diferencias entre wt y ko?
+chisq.test(counts)
 
+# ahora, vamos necesitamos construir una tabla 2×2 para cada cluster, comparando:
+# ese cluster vs todos los demás, en las dos condiciones (spl_KO, spl_WT)
+# el test evalúa si ese cluster está sobrerrepresentado o infrarrepresentado en KO respecto a WT.
 
-
-# if i want to check specific genes in cluster
-# volcano plot 
-VlnPlot(
-  spl_seurat,
-  features = "H2ax",
-  group.by = "cluster_annotation",   # usa la anotación en lugar del número
-  split.by = "orig.ident"            # WT vs KO
-) + 
-  ggtitle("H2ax expression by annotated clusters (WT vs KO)")
-
-
-FeaturePlot(
-  spl_seurat,
-  features = "H2ax",
-  reduction = "umap",
-  split.by = "orig.ident",   # genera un panel para WT y otro para KO
-  cols = c("lightgrey", "red")
+pvals <- apply(counts, 1, function(x) {
+  # x = c(spl_KO_cluster, spl_WT_cluster)
+  rest_KO <- sum(counts[, "spl_KO"]) - x[1]
+  rest_WT <- sum(counts[, "spl_WT"]) - x[2]
+  
+  mat <- matrix(c(x[1], x[2], rest_KO, rest_WT), nrow = 2)
+  fisher.test(mat)$p.value
+})
+# Añadimos resultados
+results <- data.frame(
+  Cluster = rownames(counts),
+  p.value = pvals,
+  adj.p.value = p.adjust(pvals, method = "BH")
 )
+# Log2 fold change de proporción KO vs WT
+log2fc <- log2(props[, "spl_KO"] / props[, "spl_WT"])
+results$log2FC <- log2fc
+# Añadir nombres descriptivos de los clusters
+results$cluster_name <- annotations[as.character(results$Cluster)]
+kable(results)
 
 
+# podemos plotear
+ggplot(results, aes(x = log2FC, y = -log10(p.value), label = Cluster)) +
+  geom_point(aes(color = adj.p.value < 0.05), size = 3, alpha = 0.8) +
+  geom_text(data = subset(results, adj.p.value < 0.05),
+            vjust = -0.8, size = 3.2, color = "black") +
+  scale_color_manual(values = c("grey60", "red")) +
+  theme_minimal() +
+  labs(x = "log2(FC KO vs WT)",
+       y = "-log10(p-value)",
+       color = "Significant (FDR < 0.05)",
+       title = "Cluster proportion changes (KO vs WT)") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50")
 
 
-# para chequear marcadores:
-FeaturePlot(spl_seurat, features = c("Adgre1", "Cd68", "Hba-a1", "Ly6g"), label = TRUE)
-VlnPlot(spl_seurat, features = c("Adgre1", "Ly6g", "Klf1"), group.by = "cluster_annotation")
+# Promedios por cluster y condición (por si hay replicados)
+df_summary <- df_long %>%
+  group_by(cluster, condition) %>%
+  summarise(mean_prop = mean(proportion), .groups = "drop")
 
-# usando find markers
-markers <- FindMarkers(bm_seurat, ident.1 = "Macrophages", group.by = "cluster_annotation")
-head(markers)
+ggplot(df_summary, aes(x=condition, y=mean_prop, group=cluster, color=cluster)) +
+  geom_line(size=1.2, alpha=0.8) +
+  geom_point(size=3) +
+  theme_minimal(base_size = 14) +
+  ylab("Cell proportion") +
+  xlab("") +
+  ggtitle("Changes in cell type proportions (WT vs KO)") +
+  scale_color_manual(values=colors, name="Cluster") +
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(size=12),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
 
+# alluvial plot
+
+df_alluvial <- df_long %>%
+  group_by(cluster, condition) %>%
+  summarise(proportion = sum(proportion), .groups = "drop")
+
+# ploteamos
+ggplot(df_alluvial,
+       aes(x = condition,
+           stratum = cluster,
+           alluvium = cluster,
+           y = proportion,
+           fill = cluster)) +
+  geom_alluvium(alpha = 0.6, knot.pos = 0.4) +
+  geom_stratum(alpha = 0.9, color = "grey70") +
+  scale_fill_manual(values = colors, name = "Cluster") +
+  labs(
+    x = "",
+    y = "Cell proportion",
+    title = "Flow of cell type proportions between WT and KO"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "right"
+  )
+
+
+## se puede hacer lo mismo con mousernaseq data
 
 
 

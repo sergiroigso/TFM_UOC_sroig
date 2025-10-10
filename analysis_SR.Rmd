@@ -55,6 +55,7 @@ library(tidyverse)
 library(compositions)
 library(knitr)
 library(pheatmap)
+library(ggalluvial)
 ```
 
 
@@ -208,7 +209,7 @@ DefaultAssay(spl_seurat) <- "integrated"
 spl_seurat <- ScaleData(spl_seurat, verbose = F)
 spl_seurat <- RunPCA(spl_seurat, npcs = 30, verbose = F)
 spl_seurat <- RunUMAP(spl_seurat, reduction = "pca", dims = 1:30, verbose = F)
-
+spl_seurat$orig.ident <- factor(spl_seurat$orig.ident, levels = c("spl_WT", "spl_KO"))
 DimPlot(spl_seurat, reduction = "umap") + 
   plot_annotation(title = "Spleen, after integration (Seurat 3)")
 ```
@@ -440,13 +441,72 @@ diff_df$cluster <- factor(diff_df$cluster, levels = rev(as.character(0:18)))
 # Gráfico
 ggplot(diff_df, aes(x=cluster, y=diff, fill=diff > 0)) +
   geom_bar(stat="identity") +
-  scale_fill_manual(values=c("darkred","orange"), guide=FALSE) +
+  scale_fill_manual(values=c("darkred","orange")) +
   theme_minimal() +
   ylab("Difference KO - WT") +
   xlab("Cluster") +
   ggtitle("Clusters changing between KO and WT") +
   coord_flip()
 ```
+
+```{r}
+# Promedios por cluster y condición (por si hay replicados)
+df_summary <- df_long %>%
+  group_by(cluster_name, condition) %>%
+  summarise(mean_prop = mean(proportion), .groups = "drop")
+
+ggplot(df_summary, aes(x=condition, y=mean_prop, group=cluster_name, color=cluster_name)) +
+  geom_line(size=1.2, alpha=0.8) +
+  geom_point(size=3) +
+  theme_minimal(base_size = 14) +
+  ylab("Cell proportion") +
+  xlab("") +
+  ggtitle("Changes in cell type proportions (WT vs KO)") +
+  scale_color_manual(values=colors, name="Cluster") +
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(size=12),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+```
+
+```{r}
+# alluvial plot
+
+df_alluvial <- df_long %>%
+  group_by(cluster_name, condition) %>%
+  summarise(proportion = sum(proportion), .groups = "drop")
+
+# ploteamos
+ggplot(df_alluvial,
+       aes(x = condition,
+           stratum = cluster_name,
+           alluvium = cluster_name,
+           y = proportion,
+           fill = cluster_name)) +
+  geom_alluvium(alpha = 0.6, knot.pos = 0.4) +
+  geom_stratum(alpha = 0.9, color = "grey70") +
+  scale_fill_manual(values = colors, name = "Cluster") +
+  labs(
+    x = "",
+    y = "Cell proportion",
+    title = "Flow of cell type proportions between WT and KO"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "right"
+  )
+```
+
+```{r}
+DimPlot(spl_seurat,group.by = "cluster_annotation_string", label = F, repel = TRUE, split.by = "orig.ident")
+```
+
 
 ### Immune annotation
 
@@ -608,6 +668,172 @@ ggplot(results, aes(x = log2FC, y = -log10(p.value), label = Cluster)) +
 ```
 
 
+```{r}
+# Promedios por cluster y condición (por si hay replicados)
+df_summary <- df_long %>%
+  group_by(cluster, condition) %>%
+  summarise(mean_prop = mean(proportion), .groups = "drop")
+
+ggplot(df_summary, aes(x=condition, y=mean_prop, group=cluster, color=cluster)) +
+  geom_line(size=1.2, alpha=0.8) +
+  geom_point(size=3) +
+  theme_minimal(base_size = 14) +
+  ylab("Cell proportion") +
+  xlab("") +
+  ggtitle("Changes in cell type proportions (WT vs KO)") +
+  scale_color_manual(values=colors, name="Cluster") +
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(size=12),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+```
+
+```{r}
+# alluvial plot
+
+df_alluvial <- df_long %>%
+  group_by(cluster, condition) %>%
+  summarise(proportion = sum(proportion), .groups = "drop")
+
+# ploteamos
+ggplot(df_alluvial,
+       aes(x = condition,
+           stratum = cluster,
+           alluvium = cluster,
+           y = proportion,
+           fill = cluster)) +
+  geom_alluvium(alpha = 0.6, knot.pos = 0.4) +
+  geom_stratum(alpha = 0.9, color = "grey70") +
+  scale_fill_manual(values = colors, name = "Cluster") +
+  labs(
+    x = "",
+    y = "Cell proportion",
+    title = "Flow of cell type proportions between WT and KO"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "right"
+  )
+```
+
+```{r}
+DimPlot(spl_seurat,group.by = "SingleR_clean", label = F, repel = TRUE, split.by = "orig.ident")
+```
+
+### Gene expression
+
+p21:
+
+```{r}
+FeaturePlot(
+  spl_seurat,
+  features = "Cdkn1a",
+  split.by = "orig.ident",
+  keep.scale = "feature",
+  combine = TRUE
+) & theme(legend.position = "right")
+```
+
+H2Ax
+
+```{r}
+FeaturePlot(
+  spl_seurat,
+  features = "H2ax",
+  split.by = "orig.ident",
+  keep.scale = "feature",
+  combine = TRUE
+) & theme(legend.position = "right")
+```
+
+```{r}
+FeaturePlot(
+  spl_seurat,
+  features = "Il6",
+  split.by = "orig.ident",
+  keep.scale = "feature",
+  combine = TRUE
+) & theme(legend.position = "right")
+```
+
+
+```{r}
+#"Trp53", "Cdkn1a", "Brca1", "Brca2", "H2ax", "Chek1", "Chek2", "Rad51"
+DotPlot(
+  spl_seurat,
+  features = c("Trp53", "Brca1", "H2ax", "Chek2", "Rad51"),
+  group.by = "SingleR_clean",
+  split.by = "orig.ident"
+) + 
+  RotatedAxis() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+plots <- SplitObject(spl_seurat, split.by = "orig.ident")
+
+features <- c("Trp53", "Brca1", "H2ax", "Chek2", "Rad51")
+
+p_wt <- DotPlot(
+  plots$spl_WT,
+  features = features,
+  group.by = "SingleR_clean"
+) + 
+  RotatedAxis() + 
+  ggtitle("WT")
+
+p_ko <- DotPlot(
+  plots$spl_KO,
+  features = features,
+  group.by = "SingleR_clean"
+) + 
+  RotatedAxis() + 
+  ggtitle("KO")
+
+# Obtener rangos comunes
+max_color <- max(p_wt$data$avg.exp.scaled, p_ko$data$avg.exp.scaled)
+min_color <- min(p_wt$data$avg.exp.scaled, p_ko$data$avg.exp.scaled)
+
+max_size <- max(p_wt$data$pct.exp, p_ko$data$pct.exp)
+min_size <- min(p_wt$data$pct.exp, p_ko$data$pct.exp)
+
+# Reaplicar los límites manualmente
+p_wt <- p_wt +
+  scale_color_gradient2(
+    low = "blue", mid = "white", high = "red",
+    midpoint = 0,
+    limits = c(min_color, max_color)
+  ) +
+  scale_size(range = c(0, 8), limits = c(min_size, max_size))
+
+p_ko <- p_ko +
+  scale_color_gradient2(
+    low = "blue", mid = "white", high = "red",
+    midpoint = 0,
+    limits = c(min_color, max_color)
+  ) +
+  scale_size(range = c(0, 8), limits = c(min_size, max_size))
+
+# Reducir tamaño de los dots
+p_wt <- p_wt + scale_size(range = c(0, 4))
+p_ko <- p_ko + scale_size(range = c(0, 4))
+
+(p_wt | p_ko) +
+  plot_layout(guides = "collect") &
+  theme(
+    legend.position = "right",
+    axis.text.y = element_text(size = 8)   # texto más pequeño
+  )
+
+```
+
+
 ### MouseRNAseqData
 
 ```{r}
@@ -753,6 +979,7 @@ DefaultAssay(bm_seurat) <- "integrated"
 bm_seurat <- ScaleData(bm_seurat, verbose = F)
 bm_seurat <- RunPCA(bm_seurat, npcs = 30, verbose = F)
 bm_seurat <- RunUMAP(bm_seurat, reduction = "pca", dims = 1:30, verbose = F)
+bm_seurat$orig.ident <- factor(bm_seurat$orig.ident, levels = c("bm_WT", "bm_KO"))
 
 DimPlot(bm_seurat, reduction = "umap") + 
   plot_annotation(title = "bm, after integration (Seurat 3)")
@@ -922,6 +1149,64 @@ ggplot(results, aes(x = log2FC, y = -log10(p.value), label = cluster_name)) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "grey50")
 ```
 
+```{r}
+# Promedios por cluster y condición (por si hay replicados)
+df_summary <- df_long %>%
+  group_by(cluster_name, condition) %>%
+  summarise(mean_prop = mean(proportion), .groups = "drop")
+
+ggplot(df_summary, aes(x=condition, y=mean_prop, group=cluster_name, color=cluster_name)) +
+  geom_line(size=1.2, alpha=0.8) +
+  geom_point(size=3) +
+  theme_minimal(base_size = 14) +
+  ylab("Cell proportion") +
+  xlab("") +
+  ggtitle("Changes in cell type proportions (WT vs KO)") +
+  scale_color_manual(values=colors, name="Cluster") +
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(size=12),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+```
+
+```{r}
+# alluvial plot
+
+df_alluvial <- df_long %>%
+  group_by(cluster_name, condition) %>%
+  summarise(proportion = sum(proportion), .groups = "drop")
+
+# ploteamos
+ggplot(df_alluvial,
+       aes(x = condition,
+           stratum = cluster_name,
+           alluvium = cluster_name,
+           y = proportion,
+           fill = cluster_name)) +
+  geom_alluvium(alpha = 0.6, knot.pos = 0.4) +
+  geom_stratum(alpha = 0.9, color = "grey70") +
+  scale_fill_manual(values = colors, name = "Cluster") +
+  labs(
+    x = "",
+    y = "Cell proportion",
+    title = "Flow of cell type proportions between WT and KO"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "right"
+  )
+```
+
+```{r}
+DimPlot(spl_seurat,group.by = "cluster_annotation_string", label = F, repel = TRUE, split.by = "orig.ident")
+```
+
 ### Immune data
 
 ```{r}
@@ -1081,6 +1366,162 @@ ggplot(results, aes(x = log2FC, y = -log10(p.value), label = Cluster)) +
        title = "Cluster proportion changes (KO vs WT)") +
   geom_vline(xintercept = 0, linetype = "dashed", color = "grey50")
 ```
+
+```{r}
+# Promedios por cluster y condición (por si hay replicados)
+df_summary <- df_long %>%
+  group_by(cluster, condition) %>%
+  summarise(mean_prop = mean(proportion), .groups = "drop")
+
+ggplot(df_summary, aes(x=condition, y=mean_prop, group=cluster, color=cluster)) +
+  geom_line(size=1.2, alpha=0.8) +
+  geom_point(size=3) +
+  theme_minimal(base_size = 14) +
+  ylab("Cell proportion") +
+  xlab("") +
+  ggtitle("Changes in cell type proportions (WT vs KO)") +
+  scale_color_manual(values=colors, name="Cluster") +
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(size=12),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+```
+
+```{r}
+# alluvial plot
+df_alluvial <- df_long %>%
+  group_by(cluster, condition) %>%
+  summarise(proportion = sum(proportion), .groups = "drop")
+
+# ploteamos
+ggplot(df_alluvial,
+       aes(x = condition,
+           stratum = cluster,
+           alluvium = cluster,
+           y = proportion,
+           fill = cluster)) +
+  geom_alluvium(alpha = 0.6, knot.pos = 0.4) +
+  geom_stratum(alpha = 0.9, color = "grey70") +
+  scale_fill_manual(values = colors, name = "Cluster") +
+  labs(
+    x = "",
+    y = "Cell proportion",
+    title = "Flow of cell type proportions between WT and KO"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "right"
+  )
+```
+
+```{r}
+DimPlot(bm_seurat,group.by = "SingleR_clean", label = F, repel = TRUE, split.by = "orig.ident")
+```
+
+
+### Gene expression
+
+p21:
+
+```{r}
+FeaturePlot(
+  bm_seurat,
+  features = "Cdkn1a",
+  split.by = "orig.ident",
+  keep.scale = "feature",
+  combine = TRUE
+) & theme(legend.position = "right")
+```
+
+H2Ax
+
+```{r}
+FeaturePlot(
+  bm_seurat,
+  features = "rna_H2ax",
+  split.by = "orig.ident",
+  keep.scale = "feature",
+  combine = TRUE
+) & theme(legend.position = "right")
+```
+
+```{r}
+DotPlot(
+  bm_seurat,
+  features = c("Trp53", "Brca1", "H2ax", "Chek2", "Rad51"),
+  group.by = "SingleR_clean",
+  assay = "RNA",
+  split.by = "orig.ident"
+) + 
+  RotatedAxis() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+plots <- SplitObject(bm_seurat, split.by = "orig.ident")
+
+features <- c("Trp53", "Brca1", "H2ax", "Chek2", "Rad51")
+
+p_wt <- DotPlot(
+  plots$bm_WT,
+  features = features,
+  assay = "RNA",
+  group.by = "SingleR_clean"
+) + 
+  RotatedAxis() + 
+  ggtitle("WT")
+
+p_ko <- DotPlot(
+  plots$bm_KO,
+  features = features,
+  assay = "RNA",
+  group.by = "SingleR_clean"
+) + 
+  RotatedAxis() + 
+  ggtitle("KO")
+
+# Obtener rangos comunes
+max_color <- max(p_wt$data$avg.exp.scaled, p_ko$data$avg.exp.scaled)
+min_color <- min(p_wt$data$avg.exp.scaled, p_ko$data$avg.exp.scaled)
+
+max_size <- max(p_wt$data$pct.exp, p_ko$data$pct.exp)
+min_size <- min(p_wt$data$pct.exp, p_ko$data$pct.exp)
+
+# Reaplicar los límites manualmente
+p_wt <- p_wt +
+  scale_color_gradient2(
+    low = "blue", mid = "white", high = "red",
+    midpoint = 0,
+    limits = c(min_color, max_color)
+  ) +
+  scale_size(range = c(0, 8), limits = c(min_size, max_size))
+
+p_ko <- p_ko +
+  scale_color_gradient2(
+    low = "blue", mid = "white", high = "red",
+    midpoint = 0,
+    limits = c(min_color, max_color)
+  ) +
+  scale_size(range = c(0, 8), limits = c(min_size, max_size))
+
+# Reducir tamaño de los dots
+p_wt <- p_wt + scale_size(range = c(0, 4))
+p_ko <- p_ko + scale_size(range = c(0, 4))
+
+(p_wt | p_ko) +
+  plot_layout(guides = "collect") &
+  theme(
+    legend.position = "right",
+    axis.text.y = element_text(size = 8)   # texto más pequeño
+  )
+```
+
 
 ### MouseRNAseqData
 
